@@ -1,0 +1,174 @@
+#include <rbc.h>
+#include <math.h>
+
+const float Drob = 186.5;
+const int Dkol = 30;
+
+const int LH = 36; // Левый сенсор в порту 3
+const int LL = 3; // Левый сенсор в порту 3
+const int RH = 36; // Правый сенсор в порту 2
+const int RL = 3; // Правый сенсор в порту 2
+
+float SR, SL, SensR, SensL;
+
+float difSens;
+
+int enginePower = 20; // Мощность двигателя
+int numIntertsec = 0;
+
+float koef_prop = 34; // Коэффициент пропорциональности
+float koef_dif = 11; // Дифференциальный коэффициент
+
+float old_difSens;
+float sum = 0;
+
+int8_t u;
+
+bool isTurn = false;
+
+/**
+ * 0 - прямо
+ * 1 - налево
+ * 2 - направо
+ * 3 - стоп
+ */
+int points[14] = {0, 1, 1, 0, 0, 2, 1, 1, 1, 1, 1, 2, 0, 3};
+
+/*void turn(int deg) {
+    setMotorSpeed(motorA, (int8_t) (3 * sgn(deg)));
+    setMotorSpeed(motorC, (int8_t) (-3 * sgn(deg)));
+    delay(250);
+    long EncA = getMotorEncoder(motorA);
+    setMotorSpeed(motorA, (int8_t) (50 * sgn(deg)));
+    setMotorSpeed(motorC, (int8_t) (-50 * sgn(deg)));
+    long dAlfa = (long) fabsf((deg * (Drob / Dkol)));
+    while (fabs(getMotorEncoder(motorA) - EncA) < dAlfa - 35) delay(1);
+    setMotorSpeed(motorA, (int8_t) (5 * sgn(deg)));
+    setMotorSpeed(motorC, (int8_t) (-5 * sgn(deg)));
+    while (fabsf(getMotorEncoder(motorA) - EncA) < dAlfa - 2) delay(1);
+    setMotorSpeed(motorA, 0);
+    setMotorSpeed(motorC, 0);
+    delay(300);
+}*/
+
+void turn(float deg) { // Мой вариант
+    double r = deg * 4.22;
+    setMotorSpeed(motorA, 5);
+    setMotorSpeed(motorC, -5);
+    delay(200);
+    resetMotorEncoder(motorA);
+    while (fabs(getMotorEncoder(motorA)) < r) {
+        setMotorSpeed(motorA, 30);
+        setMotorSpeed(motorC, -30);
+    }
+    setMotorSpeed(motorA, 5);
+    setMotorSpeed(motorC, -5);
+    delay(200);
+}
+
+void move(float sm) {
+    double U = sm * 5.69 * 360 / 100;
+    setMotorSpeed(motorC, 5);
+    setMotorSpeed(motorA, 5);
+    delay(200);
+    resetMotorEncoder(motorA);
+    while (getMotorEncoder(motorA) * sgn(getMotorEncoder(motorA)) < U) {
+        setMotorSpeed(motorA, 70);
+        setMotorSpeed(motorC, 70);
+    }
+    setMotorSpeed(motorC, 5);
+    setMotorSpeed(motorA, 5);
+    delay(200);
+}
+
+/**
+ * Здесь мы настраиваем повороты.
+*/
+
+void intersection() {
+    switch (points[numIntertsec]) {
+        case 0: {
+            ++numIntertsec;
+            isTurn = false;
+        }
+        case 1: {
+            ++numIntertsec;
+            move(8);
+            turn(65);
+            isTurn = false;
+        }
+        case 2: {
+            ++numIntertsec;
+            move(8);
+            turn(-65);
+            isTurn = false;
+        }
+        case 3: {
+            ++numIntertsec;
+            setMotorSpeed(motorC, 0);
+            setMotorSpeed(motorA, 0);
+        }
+        default: {
+            displayTextLine(1, "Не могу повернуться. Я сломался.");
+        }
+    }
+}
+
+/**
+ * В readSensR() и readSensL() считываем значение правого и левого датчиков,
+ * а также нормируем их.
+ */
+task readSensR() {
+    while (true) {
+        SR = getColorReflected(S2);
+        SensR = ((SR - RL) / (RH - RL));
+    }
+}
+
+task readSensL() {
+    while (true) {
+        SL = getColorReflected(S3);
+        SensL = ((SL - LL) / (LH - LL));
+    }
+}
+
+task sumSens() {
+    delay(300);
+    while (true) {
+        sum = SensL + SensR;
+        if (sum <= 0.7) isTurn = true;
+    }
+}
+
+task main() {
+    startTask(sumSens);
+    startTask(readSensR);
+    startTask(readSensL);
+    while (true) {
+        difSens = (SensR - SensL);
+
+        if (fabsf(difSens - old_difSens) > 1) {
+            u = (int8_t) (koef_prop * difSens +
+                          koef_dif * (old_difSens - difSens));
+        } else {
+            u = (int8_t) (difSens * koef_prop);
+        }
+
+        if (!isTurn) {
+            setMotorSpeed(motorA, (int8_t) (enginePower + u));
+            setMotorSpeed(motorC, (int8_t) (enginePower - u));
+        } else {
+            intersection();
+        }
+
+        old_difSens = difSens;
+
+        delay(100);
+
+        displayTextLine(3, "stop = %s", isTurn ? "true" : "false");
+        displayTextLine(4, "sum = %f", sum);
+        displayTextLine(5, "difSens = %f", difSens);
+        displayTextLine(6, "SensR = %f", SensR);
+        displayTextLine(7, "SensL = %f", SensL);
+    }
+}
